@@ -276,6 +276,14 @@ Initializer initializerSemantic(Initializer init, Scope* sc, ref Type tx, NeedIn
             if (ei && !idx)
                 ei.expandTuples = true;
             auto tn = t.nextOf();
+            /* The element type is known here; propagate it before semantic
+             * analysis so context-sensitive constructs such as a leading-dot
+             * enum member (`.member`) can resolve. */
+            if (auto vei = val.isExpInitializer())
+            {
+                if (!vei.exp.type)
+                    vei.exp = dmd.dcast.inferType(vei.exp, tn);
+            }
             val = val.initializerSemantic(sc, tn, needInterpret);
             if (val.isErrorInitializer())
                 errors = true;

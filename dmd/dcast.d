@@ -3274,10 +3274,16 @@ Expression inferType(Expression e, Type t, int flag = 0)
 
     Expression visitTer(CondExp ce)
     {
-        Type tb = t.toBasetype();
-        ce.e1 = inferType(ce.e1, tb, flag);
-        ce.e2 = inferType(ce.e2, tb, flag);
+        ce.e1 = inferType(ce.e1, t, flag);
+        ce.e2 = inferType(ce.e2, t, flag);
         return ce;
+    }
+
+    Expression visitBin(BinExp be)
+    {
+        be.e1 = inferType(be.e1, t, flag);
+        be.e2 = inferType(be.e2, t, flag);
+        return be;
     }
 
     if (t) switch (e.op)
@@ -3286,6 +3292,25 @@ Expression inferType(Expression e, Type t, int flag = 0)
         case EXP.assocArrayLiteral: return visitAar(e.isAssocArrayLiteralExp());
         case EXP.function_:         return visitFun(e.isFuncExp());
         case EXP.question:          return visitTer(e.isCondExp());
+        case EXP.or:
+        case EXP.and:
+        case EXP.xor:
+        case EXP.add:
+        case EXP.min:               return visitBin(e.isBinExp());
+        case EXP.dotIdentifier:
+            if (auto die = e.isDotIdExp())
+            {
+                if (die.isLeadingDot())
+                    die.targetType = t;
+            }
+            return e;
+        case EXP.call:
+            if (auto ce = e.isCallExp())
+            {
+                if (t && ce.isLeadingDotCall())
+                    ce.targetType = t;
+            }
+            return e;
         default:
     }
     return e;

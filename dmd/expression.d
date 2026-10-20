@@ -2212,6 +2212,19 @@ extern (C++) final class DotIdExp : UnaExp
     bool noderef;       // true if the result of the expression will never be dereferenced
     bool wantsym;       // do not replace Symbol with its initializer during semantic()
     bool arrow;         // ImportC: if -> instead of .
+    Type targetType;    // if set, `.ident` resolves against this type (context-sensitive member lookup)
+
+    extern (D) bool isLeadingDot() const
+    {
+        if (!e1)
+            return false;
+        if (e1.op == EXP.identifier)
+        {
+            auto ie = cast(const IdentifierExp)e1;
+            return ie.ident == Id.empty;
+        }
+        return false;
+    }
 
     extern (D) this(Loc loc, Expression e, Identifier ident) @safe
     {
@@ -2390,6 +2403,20 @@ extern (C++) final class CallExp : UnaExp
     bool fromOpAssignment;  // set when operator overload method call from assignment (2024 edition)
     VarDeclaration vthis2;  // container for multi-context
     Expression loweredFrom; // set if this is the result of a lowering
+    Type targetType;        // if set, `.{...}` resolves as a literal of this type (context-sensitive)
+
+    /// true if this is a context-sensitive `.{...}` aggregate literal
+    extern (D) bool isLeadingDotCall() const
+    {
+        if (!e1)
+            return false;
+        if (e1.op == EXP.identifier)
+        {
+            auto ie = cast(const IdentifierExp)e1;
+            return ie.ident == Id.empty;
+        }
+        return false;
+    }
 
     /// Puts the `arguments` and `names` into an `ArgumentList` for easily passing them around.
     /// The fields are still separate for backwards compatibility

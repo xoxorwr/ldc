@@ -2185,6 +2185,8 @@ version (IN_LLVM)
         bool errors = false;
 
         //printf("CaseStatement::semantic() %s\n", toChars());
+        if (sw && sw.condition && sw.condition.type)
+            cs.exp = inferType(cs.exp, sw.condition.type);
         sc = sc.startCTFE();
         cs.exp = cs.exp.expressionSemantic(sc);
         cs.exp = resolveProperties(sc, cs.exp);

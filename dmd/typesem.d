@@ -3623,9 +3623,6 @@ Type typeSemantic(Type type, Loc loc, Scope* sc)
                 return error();
             }
 
-            __gshared FuncDeclaration feq = null;
-            __gshared FuncDeclaration fcmp = null;
-            __gshared FuncDeclaration fhash = null;
             if (!feq)
                 feq = search_function(ClassDeclaration.object, Id.opEquals).isFuncDeclaration();
             if (!fcmp)
@@ -4909,7 +4906,16 @@ Type merge2(Type type)
         assert(t.deco);
     }
     else
-        assert(0);
+    {
+        version (DMDLIB)
+        {
+            // Tooling may evict entries during re-analysis; merge anew instead.
+            t.deco = null;
+            return t.merge();
+        }
+        else
+            assert(0);
+    }
     return t;
 }
 
@@ -7528,24 +7534,7 @@ bool isZeroInit(Type t, Loc loc)
 
     bool visitBasic(TypeBasic t)
     {
-        switch (t.ty)
-        {
-            case Tchar:
-            case Twchar:
-            case Tdchar:
-            case Timaginary32:
-            case Timaginary64:
-            case Timaginary80:
-            case Tfloat32:
-            case Tfloat64:
-            case Tfloat80:
-            case Tcomplex32:
-            case Tcomplex64:
-            case Tcomplex80:
-                return false; // no
-            default:
-                return true; // yes
-        }
+        return true; // yes
     }
 
     bool visitVector(TypeVector t)
@@ -7609,31 +7598,19 @@ Expression defaultInit(Type mt, Loc loc, const bool isCfile = false)
 
         switch (mt.ty)
         {
-        case Tchar:
-            value = isCfile ? 0 : 0xFF;
-            break;
-
-        case Twchar:
-        case Tdchar:
-            value = isCfile ? 0 : 0xFFFF;
-            break;
-
         case Timaginary32:
         case Timaginary64:
         case Timaginary80:
         case Tfloat32:
         case Tfloat64:
         case Tfloat80:
-            return new RealExp(loc, isCfile ? CTFloat.zero : target.RealProperties.nan, mt);
+            return new RealExp(loc, CTFloat.zero, mt);
 
         case Tcomplex32:
         case Tcomplex64:
         case Tcomplex80:
             {
-                // Can't use fvalue + I*fvalue (the im part becomes a quiet NaN).
-                const cvalue = isCfile ? complex_t(CTFloat.zero, CTFloat.zero)
-                                       : complex_t(target.RealProperties.nan, target.RealProperties.nan);
-                return new ComplexExp(loc, cvalue, mt);
+                return new ComplexExp(loc, complex_t(CTFloat.zero, CTFloat.zero), mt);
             }
 
         case Tvoid:
@@ -7973,13 +7950,27 @@ Type addStorageClass(Type type, STC stc)
  *      Complex!float, Complex!double, Complex!real or null for error
  */
 
+// Caches for getComplexLibraryType and the AA-key functions; hoisted so deinitialize can reset them.
+private __gshared Type complex_float;
+private __gshared Type complex_double;
+private __gshared Type complex_real;
+private __gshared FuncDeclaration feq = null;
+private __gshared FuncDeclaration fcmp = null;
+private __gshared FuncDeclaration fhash = null;
+
+/// Reset the module's global state between analyses.
+void deinitialize() nothrow
+{
+    complex_float = null;
+    complex_double = null;
+    complex_real = null;
+    feq = null;
+    fcmp = null;
+    fhash = null;
+}
+
 Type getComplexLibraryType(Loc loc, Scope* sc, TY ty)
 {
-    // singleton
-    __gshared Type complex_float;
-    __gshared Type complex_double;
-    __gshared Type complex_real;
-
     Type* pt;
     Identifier id;
     switch (ty)

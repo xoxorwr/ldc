@@ -256,6 +256,15 @@ bool hasNestedFrameRefs(FuncDeclaration _this)
     return false;
 }
 
+// Cache for genCfunc; hoisted so deinitialize can reset it.
+private __gshared DsymbolTable st = null;
+
+/// Reset the module's global state between analyses.
+void deinitialize() nothrow
+{
+    st = null;
+}
+
 /**********************************
  * Generate a FuncDeclaration for a runtime library function.
  */
@@ -269,7 +278,6 @@ FuncDeclaration genCfunc(Parameters* fparams, Type treturn, Identifier id, STC s
     FuncDeclaration fd;
     TypeFunction tf;
     Dsymbol s;
-    __gshared DsymbolTable st = null;
 
     //printf("genCfunc(name = '%s')\n", id.toChars());
     //printf("treturn\n\t"); treturn.print();
@@ -900,6 +908,7 @@ Ldone:
      */
     funcdecl._scope = sc.copy();
     funcdecl._scope.setNoFree();
+    funcdecl._scope.parent = funcdecl;
 
     __gshared bool printedMain = false; // semantic might run more than once
     if (global.params.v.verbose && !printedMain)

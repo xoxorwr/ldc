@@ -1297,3 +1297,12 @@ void write(ref OutBuffer buf, RootObject obj)
             buf.writestring(obj.toChars());
     }
 }
+
+/// Reset the module's global state between analyses.
+void deinitialize() nothrow
+{
+    TemplateTypeParameter.tdummy = null;
+    TemplateValueParameter.edummies = null;
+    TemplateAliasParameter.sdummy = null;
+    TemplateStats.stats = null;
+}

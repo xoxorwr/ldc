@@ -2390,9 +2390,12 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
         }
         else
         {
-            if (arrayExpressionSemantic(ce.arguments.peekSlice(), sc))
-                return ErrorExp.get();
-
+            /* Resolve the member/property before semanticizing the arguments.
+             * `dotIdSemanticProp` does not need them, and they must still be
+             * untyped here so that `CallExp` can infer context-sensitive
+             * leading-dot arguments (`.member`) from the resolved callee's
+             * parameter types.
+             */
             if (Expression ey = die.dotIdSemanticProp(sc, 1))
             {
                 if (ey.op == EXP.error)
@@ -2400,6 +2403,9 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
                 ce.e1 = ey;
                 if (isDotOpDispatch(ey))
                 {
+                    if (arrayExpressionSemantic(ce.arguments.peekSlice(), sc))
+                        return ErrorExp.get();
+
                     const errors = global.startGagging();
                     e = ce.expressionSemantic(sc);
                     if (!global.endGagging(errors))
@@ -2410,6 +2416,10 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
                 else
                     return null;
             }
+
+            // No member/property: arguments must be semanticized for the UFCS search
+            if (arrayExpressionSemantic(ce.arguments.peekSlice(), sc))
+                return ErrorExp.get();
         }
 
         /* https://issues.dlang.org/show_bug.cgi?id=13953
@@ -6170,6 +6180,19 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (e.sd.sizeok != Sizeok.done)
             return setError();
 
+        if (e.elements)
+        {
+            foreach (i, ref elem; *e.elements)
+            {
+                if (elem && i < e.sd.fields.length)
+                {
+                    if (auto field = e.sd.fields[i])
+                        if (field.type)
+                            elem = inferType(elem, field.type);
+                }
+            }
+        }
+
         // run semantic() on each element
         if (arrayExpressionSemantic(e.elements.peekSlice(), sc))
             return setError();
@@ -7538,6 +7561,25 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             printf("CallExp::semantic() %s\n", exp.toChars());
         }
 
+        /* Context-sensitive aggregate literal `.{...}`: the callee is an empty
+         * identifier and the target type was inferred from context. Rewrite it to
+         * a regular type construction so the existing literal/ctor resolution runs.
+         */
+        if (exp.e1 && exp.e1.op == EXP.identifier)
+        {
+            auto ie = exp.e1.isIdentifierExp();
+            if (ie && ie.ident == Id.empty)
+            {
+                if (exp.targetType && exp.targetType.toBasetype().ty == Tstruct)
+                    exp.e1 = new TypeExp(exp.loc, exp.targetType);
+                else
+                {
+                    error(exp.loc, "cannot infer target type for `.{...}`");
+                    return setError();
+                }
+            }
+        }
+
         scope (exit)
         {
             if (TypeFunction tf = exp.f ? cast(TypeFunction)exp.f.type : null)
@@ -7819,6 +7861,42 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             result = exp.e1;
             return;
         }
+
+        if (t1 && exp.arguments)
+        {
+            if (t1.ty == Tfunction)
+            {
+                TypeFunction tf = t1.isTypeFunction();
+                const paramCount = tf.parameterList.length;
+                foreach (i, ref arg; *exp.arguments)
+                {
+                    if (arg && i < paramCount && arg.op != EXP.function_)
+                    {
+                        if (auto p = tf.parameterList[i])
+                        {
+                            if (p.type)
+                                arg = inferType(arg, p.type);
+                        }
+                    }
+                }
+            }
+            else if (t1.ty == Tstruct)
+            {
+                auto sd = (cast(TypeStruct)t1).sym;
+                foreach (i, ref arg; *exp.arguments)
+                {
+                    if (arg && i < sd.fields.length && arg.op != EXP.function_)
+                    {
+                        if (auto field = sd.fields[i])
+                        {
+                            if (field.type)
+                                arg = inferType(arg, field.type);
+                        }
+                    }
+                }
+            }
+        }
+
         if (arrayExpressionSemantic(exp.arguments.peekSlice(), sc) ||
             preFunctionParameters(sc, exp.argumentList, global.errorSink))
             return setError();
@@ -12211,7 +12289,8 @@ version (IN_LLVM)
          * depends on the result of e1 in assignments.
          */
         {
-            Expression e2x = inferType(exp.e2, t1.baseElemOf());
+            Type elemType = t1.isTypeEnum() ? t1 : t1.baseElemOf();
+            Expression e2x = inferType(exp.e2, elemType);
             e2x = e2x.expressionSemantic(sc);
             if (!t1.isTypeSArray())
                 e2x = e2x.arrayFuncConv(sc);
@@ -15643,8 +15722,22 @@ Expression binSemantic(BinExp e, Scope* sc)
     {
         printf("BinExp::semantic('%s')\n", e.toChars());
     }
-    Expression e1x = e.e1.expressionSemantic(sc);
-    Expression e2x = e.e2.expressionSemantic(sc);
+    Expression e1x;
+    Expression e2x;
+    if (e.e1.isDotIdExp() && e.e1.isDotIdExp().isLeadingDot())
+    {
+        e2x = e.e2.expressionSemantic(sc);
+        if (e2x.type)
+            e.e1 = inferType(e.e1, e2x.type);
+        e1x = e.e1.expressionSemantic(sc);
+    }
+    else
+    {
+        e1x = e.e1.expressionSemantic(sc);
+        if (e1x.type && e.e2.isDotIdExp() && e.e2.isDotIdExp().isLeadingDot())
+            e.e2 = inferType(e.e2, e1x.type);
+        e2x = e.e2.expressionSemantic(sc);
+    }
 
     // for static alias this: https://issues.dlang.org/show_bug.cgi?id=17684
     if (e1x.op == EXP.type)
@@ -15933,6 +16026,36 @@ Expression dotIdSemanticProp(DotIdExp exp, Scope* sc, bool gag)
             if (p && checkAccess(sc, p))
             {
                 s = null;
+            }
+        }
+        /* Context-sensitive dot: when module lookup fails for `.ident` expressions
+         * (leading dot syntax), check if targetType was set.
+         * If so, do an O(1) lookup in that type's members.
+         */
+        if (!s && exp.targetType && ie.sds.isModule())
+        {
+            Type tb = exp.targetType.toBasetype();
+            Dsymbol ds = null;
+            if (auto te = exp.targetType.isTypeEnum())
+                ds = te.sym;
+            else if (auto te = tb.isTypeEnum())
+                ds = te.sym;
+            else
+                ds = exp.targetType.toDsymbol(sc);
+
+            if (ds)
+            {
+                if (auto sd = ds.isScopeDsymbol())
+                {
+                    if (sd.symtab)
+                    {
+                        if (auto member = sd.symtab.lookup(exp.ident))
+                        {
+                            if (auto enumMember = member.isEnumMember())
+                                s = enumMember;
+                        }
+                    }
+                }
             }
         }
         if (s)

@@ -1794,6 +1794,14 @@ private struct FuncDeclSem3
  * Returns:
  *   FuncDeclaration of `toString()` if found, `null` if not
  */
+private __gshared TypeFunction tftostring;
+
+/// Reset the module's global state between analyses.
+void deinitialize() nothrow
+{
+    tftostring = null;
+}
+
 FuncDeclaration search_toString(StructDeclaration sd)
 {
     Dsymbol s = search_function(sd, Id.tostring);
@@ -1801,7 +1809,6 @@ FuncDeclaration search_toString(StructDeclaration sd)
     if (!fd)
         return null;
 
-    __gshared TypeFunction tftostring;
     if (!tftostring)
     {
         tftostring = new TypeFunction(ParameterList(), Type.tstring, LINK.d);
